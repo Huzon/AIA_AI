@@ -1,15 +1,21 @@
+import 'package:uuid/uuid.dart';
+
 class ChatMessage {
+  final String id; // Add this field
+
   final String text;
   final bool isUser;
   final bool isLoading;
   final DateTime timestamp;
 
   ChatMessage({
+    String? id, // Make optional
+
     required this.text,
     required this.isUser,
     required this.timestamp,
     this.isLoading = false,
-  });
+  }) : id = id ?? const Uuid().v4();
 
   Map<String, dynamic> toMap() {
     return {

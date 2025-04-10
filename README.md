@@ -26,6 +26,7 @@ AIA is an emotionally intelligent AI assistant built using **Flutter**. Powered 
 2. **Install Depenencies**
     ```bash
     flutter pub get
+4. **Get the google API Key** https://aistudio.google.com/ and store it in the **.env** file
 3. **Run the App**
     ```bash
     flutter run

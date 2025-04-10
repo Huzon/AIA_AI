@@ -1,7 +1,10 @@
 // tts_service.dart
 import 'dart:io';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+
+final ttsServiceProvider = Provider((ref) => TTSService());
 
 class TTSService {
   final FlutterTts _flutterTts = FlutterTts();
@@ -116,6 +119,14 @@ class TTSService {
             .replaceAll(RegExp(r'\n{2,}'), '\n\n')
             .replaceAll(RegExp(r' {2,}'), ' ')
             .replaceAll(RegExp(r'[\*\#\>\<\`\~\|\_]'), '')
+            // Removing EMOTES
+            .replaceAll(
+              RegExp(
+                r'[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]',
+                unicode: true,
+              ),
+              '',
+            )
             .trim();
 
     return noMarkdown;

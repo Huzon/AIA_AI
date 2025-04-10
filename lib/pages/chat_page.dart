@@ -1,15 +1,14 @@
+import 'package:aia/elements/drawer.dart';
+import 'package:aia/models/chat_message.dart';
 import 'package:aia/pages/talk_mode_page.dart';
 import 'package:aia/services/tts_services.dart';
 import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 
 import '../providers/chat_provider.dart';
-import '../providers/stt_provider.dart';
-import '../providers/tts_provider.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
@@ -20,41 +19,65 @@ class ChatPage extends ConsumerStatefulWidget {
 
 class _ChatPageState extends ConsumerState<ChatPage> {
   final TextEditingController _controller = TextEditingController();
-  final bool _isListening = false;
-  final String _spokenText = '';
+  final Map<String, bool> _speakingStates = {};
+  late final TTSService ttsService;
+  @override
+  void initState() {
+    super.initState();
+    ttsService = ref.read(ttsServiceProvider);
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    // Stop any ongoing speech when leaving the page
+    ttsService.stop();
     super.dispose();
   }
 
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      _controller.clear();
-      await ref.read(chatProvider.notifier).sendMessage(text);
+    if (text.isEmpty) return;
 
-      // Speak the last bot message
-      final messages = ref.read(chatProvider);
-      if (messages.isNotEmpty && !messages.last.isUser) {
-        await ref.read(ttsServiceProvider).speak(messages.last.text);
-      }
+    _controller.clear();
+    await ref.read(chatProvider.notifier).sendMessage(text);
+
+    // Speak the last bot response
+    final messages = ref.read(chatProvider);
+    if (messages.isNotEmpty && !messages.last.isUser) {
+      await ttsService.speak(messages.last.text);
     }
+  }
+
+  void _toggleMessageSpeech(ChatMessage msg) async {
+    final tts = ttsService;
+    final isSpeaking = _speakingStates[msg.id] ?? false;
+
+    if (isSpeaking) {
+      await tts.stop();
+    } else {
+      await tts.speak(msg.text);
+    }
+
+    setState(() => _speakingStates[msg.id] = !isSpeaking);
+  }
+
+  void _copyToClipboard(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
   }
 
   @override
   Widget build(BuildContext context) {
     final chatMessages = ref.watch(chatProvider);
     final chatNotifier = ref.read(chatProvider.notifier);
-    final size = MediaQuery.of(context).size;
 
     return Scaffold(
-      // resizeToAvoidBottomInset: false,
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 0, 9, 16),
         foregroundColor: Colors.white,
-        // title: const Text('AIA Chat'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -67,233 +90,158 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
           IconButton(
             icon: const Icon(Icons.mic),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const TalkModePage()),
-              );
-            },
+            onPressed:
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const TalkModePage()),
+                ),
           ),
         ],
       ),
-      drawer: Drawer(
-        child: ListView(
-          children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(color: Colors.deepPurple),
-              child: Text(
-                'Chat Sessions',
-                style: TextStyle(color: Colors.white, fontSize: 24),
-              ),
-            ),
-            ...chatNotifier.sessionKeys.map((sessionKey) {
-              return ListTile(
-                title: Text(
-                  sessionKey,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing:
-                    sessionKey == chatNotifier.currentSessionKey
-                        ? const Icon(Icons.check)
-                        : null,
-                onTap: () {
-                  chatNotifier.switchSession(sessionKey);
-                  Navigator.pop(context);
-                },
-              );
-            }),
-          ],
-        ),
-      ),
+      drawer: AppDrawer(chatNotifier: chatNotifier),
       body: Stack(
         children: [
-          SingleChildScrollView(
-            physics: NeverScrollableScrollPhysics(),
-            child: SizedBox(
-              height: MediaQuery.of(context).size.height,
-              child: Image.asset(
-                'assets/female_ai_silhouette_bright_smile.png',
-                fit: BoxFit.cover,
+          _buildBackgroundImage(),
+          SafeArea(child: _buildChatContent(chatMessages)),
+        ],
+      ),
+    );
+  }
+
+  // Widget _buildSessionDrawer(ChatNotifier chatNotifier) {
+  //   return Drawer(
+  //     child: ListView(
+  //       children: [
+  //         const DrawerHeader(
+  //           decoration: BoxDecoration(color: Colors.deepPurple),
+  //           child: Text(
+  //             'Chat Sessions',
+  //             style: TextStyle(color: Colors.white, fontSize: 24),
+  //           ),
+  //         ),
+  //         ...chatNotifier.sessionKeys.map(
+  //           (sessionKey) => ListTile(
+  //             title: Text(
+  //               sessionKey,
+  //               maxLines: 1,
+  //               overflow: TextOverflow.ellipsis,
+  //             ),
+  //             trailing:
+  //                 sessionKey == chatNotifier.currentSessionKey
+  //                     ? const Icon(Icons.check)
+  //                     : null,
+  //             onTap: () {
+  //               chatNotifier.switchSession(sessionKey);
+  //               Navigator.pop(context);
+  //             },
+  //           ),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
+
+  Widget _buildBackgroundImage() {
+    return SizedBox.expand(
+      child: Image.asset(
+        'assets/female_ai_silhouette_bright_smile.png',
+        fit: BoxFit.cover,
+      ),
+    );
+  }
+
+  Widget _buildChatContent(List<ChatMessage> chatMessages) {
+    return Column(
+      children: [
+        Expanded(child: _buildMessageList(chatMessages)),
+        _buildMessageInput(),
+      ],
+    );
+  }
+
+  Widget _buildMessageList(List<ChatMessage> messages) {
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemCount: messages.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final msg = messages[index];
+        final isSpeaking = _speakingStates[msg.id] ?? false;
+
+        return GestureDetector(
+          onLongPress: () => _copyToClipboard(msg.text),
+          child: Align(
+            alignment:
+                msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Bubble(
+              borderColor: msg.isUser ? Colors.green : Colors.white,
+              color: Colors.white.withAlpha(32),
+              nip: msg.isUser ? BubbleNip.rightTop : BubbleNip.leftTop,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  MarkdownBody(
+                    data: msg.text,
+                    styleSheet: MarkdownStyleSheet.fromTheme(
+                      Theme.of(context),
+                    ).copyWith(
+                      p: const TextStyle(fontSize: 16, color: Colors.white),
+                      a: const TextStyle(color: Colors.white),
+                      code: const TextStyle(color: Colors.white),
+                      codeblockDecoration: BoxDecoration(
+                        color: Colors.white.withAlpha(80),
+                      ),
+                      em: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${msg.timestamp.hour}:${msg.timestamp.minute}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      if (!msg.isUser)
+                        IconButton(
+                          onPressed: () => _toggleMessageSpeech(msg),
+                          icon: Icon(
+                            isSpeaking ? Icons.volume_off : Icons.volume_up,
+                          ),
+                          iconSize: 20,
+                        ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
-          SafeArea(
-            child: Column(
-              children: [
-                // Use Expanded to wrap the ListView.builder properly
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: chatMessages.length,
-                    separatorBuilder:
-                        (context, index) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final msg = chatMessages[index];
-                      bool isSpeaking = false;
-                      return GestureDetector(
-                        onLongPress: () {
-                          Clipboard.setData(ClipboardData(text: msg.text));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Copied to clipboard')),
-                          );
-                        },
-                        child: Align(
-                          alignment:
-                              msg.isUser
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                          child: Bubble(
-                            borderColor:
-                                msg.isUser ? Colors.green : Colors.white,
-                            color: Colors.white.withAlpha(32),
-                            nip:
-                                msg.isUser
-                                    ? BubbleNip.rightTop
-                                    : BubbleNip.leftTop,
+        );
+      },
+    );
+  }
 
-                            // child: Container(
-                            //   constraints: BoxConstraints(
-                            //     maxWidth: size.width * 0.8,
-                            //   ),
-                            //   padding: const EdgeInsets.all(12),
-                            //   margin: const EdgeInsets.symmetric(vertical: 6),
-                            //   decoration: BoxDecoration(
-                            //     color:
-                            //     // msg.isUser
-                            //     // ?
-                            //     Colors.white.withAlpha(32),
-                            //     // : Colors.black.withAlpha(64),
-                            //     borderRadius: BorderRadius.circular(12),
-                            //     border: Border.all(
-                            //       width: 2,
-                            //       color:
-                            //           msg.isUser ? Colors.purple : Colors.grey,
-                            //     ),
-                            //   ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // SingleChildScrollView(
-                                // constraints: BoxConstraints(
-                                //   maxWidth: size.width * 0.8,
-                                // ),
-                                MarkdownBody(
-                                  data:
-                                      msg.text, // This is where your Gemini text goes
-                                  styleSheet: MarkdownStyleSheet.fromTheme(
-                                    Theme.of(context),
-                                  ).copyWith(
-                                    p: TextStyle(
-                                      fontSize: 16,
-                                      color: Colors.white,
-                                    ),
-                                    a: TextStyle(
-                                      // fontSize: 16,
-                                      color: Colors.white,
-                                    ),
-                                    code: TextStyle(
-                                      // fontSize: 16,
-                                      color: Colors.white,
-                                    ),
-                                    codeblockDecoration: BoxDecoration(
-                                      color: Colors.white.withAlpha(80),
-                                    ),
-                                    em: TextStyle(
-                                      // fontSize: 16,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                // ),
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      '${msg.timestamp.hour}:${msg.timestamp.minute}',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                    if (!msg.isUser)
-                                      IconButton(
-                                        onPressed: () {
-                                          isSpeaking
-                                              ? ref
-                                                  .read(ttsServiceProvider)
-                                                  .stop()
-                                              : ref
-                                                  .read(ttsServiceProvider)
-                                                  .speak(msg.text);
-                                          setState(
-                                            () => isSpeaking = !isSpeaking,
-                                          );
-                                        },
-                                        icon:
-                                            isSpeaking
-                                                ? Icon(Icons.volume_off)
-                                                : Icon(Icons.volume_down),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // ),
-                      );
-                    },
-                  ),
-                ),
-                if (_isListening)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      _spokenText,
-                      style: TextStyle(
-                        color: Theme.of(context).primaryColor,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                  ),
-                Container(
-                  color: Colors.black12,
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      // IconButton(
-                      //   icon: Icon(
-                      //     _isListening ? Icons.mic_off : Icons.mic,
-                      //     color: _isListening ? Colors.red : Colors.grey,
-                      //   ),
-                      //   onPressed: _toggleListening,
-                      // ),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _controller,
-                          style: TextStyle(color: Colors.white),
-                          maxLength: 500,
-
-                          decoration: const InputDecoration(
-                            hintText: 'Type your message...',
-                            border: OutlineInputBorder(),
-                          ),
-
-                          // onSubmitted: (_) => _sendMessage(),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.send),
-                        onPressed: _sendMessage,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+  Widget _buildMessageInput() {
+    return Container(
+      color: Colors.black12,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextFormField(
+              controller: _controller,
+              style: const TextStyle(color: Colors.white),
+              maxLength: 500,
+              decoration: const InputDecoration(
+                hintText: 'Type your message...',
+                border: OutlineInputBorder(),
+              ),
+              onFieldSubmitted: (_) => _sendMessage(),
             ),
           ),
+          IconButton(icon: const Icon(Icons.send), onPressed: _sendMessage),
         ],
       ),
     );

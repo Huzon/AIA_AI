@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'package:aia/elements/drawer.dart';
+import 'package:aia/pages/chat_page.dart';
 import 'package:aia/providers/chat_provider.dart';
-import 'package:aia/providers/stt_provider.dart';
-import 'package:aia/providers/tts_provider.dart';
+
+import 'package:aia/services/stt_services.dart';
+import 'package:aia/services/tts_services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -20,25 +23,36 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
   Timer? _silenceTimer;
   final Duration _silenceTimeout = const Duration(seconds: 2);
   final List<Map<String, dynamic>> _conversation = [];
+  late final TTSService ttsService;
+  late final STTService sttService;
+  @override
+  void initState() {
+    super.initState();
+    ttsService = ref.read(ttsServiceProvider);
+    sttService = ref.read(sttServiceProvider);
+  }
 
   @override
   void dispose() {
     _silenceTimer?.cancel();
+    ttsService.stop();
+    sttService.stopListening();
     super.dispose();
   }
 
   Future<void> _processUserInput() async {
     if (_spokenText.isEmpty) return;
-
-    setState(() {
-      _conversation.add({
-        'text': _spokenText,
-        'isUser': true,
-        'timestamp': DateTime.now(),
+    if (mounted) {
+      setState(() {
+        _conversation.add({
+          'text': _spokenText,
+          'isUser': true,
+          'timestamp': DateTime.now(),
+        });
+        _isListening = false;
+        _spokenText = '';
       });
-      _isListening = false;
-      _spokenText = '';
-    });
+    }
 
     // Send to chat provider
     await ref
@@ -48,19 +62,22 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
     // Get the bot response
     final messages = ref.read(chatProvider);
     if (messages.isNotEmpty && !messages.last.isUser) {
-      setState(() {
-        _conversation.add({
-          'text': messages.last.text,
-          'isUser': false,
-          'timestamp': DateTime.now(),
+      if (mounted) {
+        setState(() {
+          _conversation.add({
+            'text': messages.last.text,
+            'isUser': false,
+            'timestamp': DateTime.now(),
+          });
+          _isBotSpeaking = true;
         });
-        _isBotSpeaking = true;
-      });
+      }
 
       // Speak the response
-      await ref.read(ttsServiceProvider).speak(messages.last.text);
-
-      setState(() => _isBotSpeaking = false);
+      await ttsService.speak(messages.last.text);
+      if (mounted) {
+        setState(() => _isBotSpeaking = false);
+      }
 
       // Restart listening automatically
       if (mounted) {
@@ -70,7 +87,7 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
   }
 
   Future<void> _startListening() async {
-    final sttService = ref.read(sttServiceProvider);
+    // final sttService = ref.read(sttServiceProvider);
 
     // Check permissions
     final micStatus = await Permission.microphone.request();
@@ -93,11 +110,10 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
       );
       return;
     }
-
-    setState(() => _isListening = true);
+    if (mounted) setState(() => _isListening = true);
 
     sttService.startListening((text) {
-      setState(() => _spokenText = text);
+      if (mounted) setState(() => _spokenText = text);
 
       // Reset the silence timer whenever we get new speech
       _silenceTimer?.cancel();
@@ -107,7 +123,9 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
 
   Future<void> _stopListening() async {
     _silenceTimer?.cancel();
-    setState(() => _isListening = false);
+    if (mounted) {
+      setState(() => _isListening = false);
+    }
     ref.read(sttServiceProvider).stopListening();
     await _processUserInput();
   }
@@ -127,7 +145,18 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
         title: const Text('Talk Mode'),
         backgroundColor: const Color.fromARGB(255, 0, 9, 16),
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.keyboard),
+            onPressed:
+                () => Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ChatPage()),
+                ),
+          ),
+        ],
       ),
+      // drawer: AppDrawer(chatNotifier: chatNotier),
       body: Stack(
         children: [
           SingleChildScrollView(
