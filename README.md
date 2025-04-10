@@ -21,7 +21,7 @@ AIA is an emotionally intelligent AI assistant built using **Flutter**. Powered 
 
 1. **Clone the repo**  
    ```bash
-   git clone https://github.com/yourusername/aia.git
+   git clone https://github.com/Huzon/aia.git
    cd aia
 2. **Install Depenencies**
     ```bash
