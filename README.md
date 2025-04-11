@@ -16,6 +16,7 @@ AIA is an emotionally intelligent AI assistant built using **Flutter**. Powered 
 - **Flutter** – for cross-platform mobile app development
 - **Google Gemini** – for intelligent conversation generation
 - **TTS & STT** – for speech input/output
+- **Riverpod** – for state management
 
 ## 🚀 Getting Started
 
