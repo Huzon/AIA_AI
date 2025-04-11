@@ -1,4 +1,4 @@
-import 'package:aia/pages/chat_page.dart';
+import 'package:aia/pages/talk_mode_page.dart';
 import 'package:flutter/material.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -69,7 +69,7 @@ class _SplashScreenState extends State<SplashScreen>
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder:
-              (context, animation, secondaryAnimation) => const ChatPage(),
+              (context, animation, secondaryAnimation) => const TalkModePage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
           },

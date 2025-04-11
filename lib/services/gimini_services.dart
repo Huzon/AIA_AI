@@ -13,15 +13,6 @@ class GeminiService {
     try {
       final contents = <Map<String, dynamic>>[];
 
-      // Optional: Add system instruction
-      // contents.add({
-      //   "parts": [
-      //     {
-      //       "text":
-      //           "You are an emotional and compassionate assistant. Be helpful and caring.",
-      //     },
-      //   ],
-      // });
       for (var message in history) {
         contents.add({
           "role": message.isUser ? "user" : "model",

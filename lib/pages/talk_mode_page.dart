@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:aia/elements/drawer.dart';
 import 'package:aia/pages/chat_page.dart';
 import 'package:aia/services/stt_services.dart';
 import 'package:aia/services/tts_services.dart';
 import 'package:aia/providers/chat_provider.dart';
+import 'package:aia/models/chat_message.dart';
 
 class TalkModePage extends ConsumerStatefulWidget {
   const TalkModePage({super.key});
@@ -19,16 +22,25 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
   bool _isBotSpeaking = false;
   String _spokenText = '';
   Timer? _silenceTimer;
+  bool _isWaitingForResponse = false;
   final _silenceTimeout = const Duration(seconds: 2);
-  final List<Map<String, dynamic>> _conversation = [];
   late final TTSService ttsService;
   late final STTService sttService;
+  final Map<String, bool> _speakingStates = {};
 
   @override
   void initState() {
     super.initState();
     ttsService = ref.read(ttsServiceProvider);
     sttService = ref.read(sttServiceProvider);
+    _loadCurrentSession();
+  }
+
+  void _loadCurrentSession() {
+    final messages = ref.read(chatProvider);
+    for (var msg in messages) {
+      _addToConversation(msg.text, msg.isUser, msg.timestamp);
+    }
   }
 
   @override
@@ -41,32 +53,34 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
 
   Future<void> _processUserInput() async {
     if (_spokenText.isEmpty) return;
-    _updateConversation(_spokenText, true);
-    _spokenText = '';
-    _isListening = false;
 
-    await ref
-        .read(chatProvider.notifier)
-        .sendMessage(_conversation.last['text']);
-    final messages = ref.read(chatProvider);
+    setState(() => _isWaitingForResponse = true);
 
-    if (messages.isNotEmpty && !messages.last.isUser) {
-      final botResponse = messages.last.text;
-      _updateConversation(botResponse, false);
-      _isBotSpeaking = true;
-      await ttsService.speak(botResponse);
-      _isBotSpeaking = false;
-      if (mounted) await _startListening();
+    final chatNotifier = ref.read(chatProvider.notifier);
+    try {
+      await chatNotifier.sendMessage(_spokenText);
+      _spokenText = '';
+      _isListening = false;
+
+      final messages = ref.read(chatProvider);
+      if (messages.isNotEmpty && !messages.last.isUser) {
+        final botResponse = messages.last.text;
+        _isBotSpeaking = true;
+        await ttsService.speak(botResponse);
+        _isBotSpeaking = false;
+        if (mounted) await _startListening();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isWaitingForResponse = false);
+      }
     }
-    if (mounted) setState(() {});
   }
 
-  void _updateConversation(String text, bool isUser) {
-    _conversation.add({
-      'text': text,
-      'isUser': isUser,
-      'timestamp': DateTime.now(),
-    });
+  void _addToConversation(String text, bool isUser, DateTime timestamp) {
+    // This replaces the local _conversation list with the provider's messages
+    // We don't need to maintain a separate list since we're using chatProvider
+    if (mounted) setState(() {});
   }
 
   Future<void> _startListening() async {
@@ -115,14 +129,38 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
     }
   }
 
+  void _toggleMessageSpeech(ChatMessage msg) async {
+    final isSpeaking = _speakingStates[msg.id] ?? false;
+
+    if (isSpeaking) {
+      await ttsService.stop();
+    } else {
+      await ttsService.speak(msg.text);
+    }
+
+    setState(() => _speakingStates[msg.id] = !isSpeaking);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final chatMessages = ref.watch(chatProvider);
+    final chatNotifier = ref.read(chatProvider.notifier);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Talk Mode'),
         backgroundColor: const Color(0xFF000910),
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              chatNotifier.startNewSession();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('New session started!')),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.keyboard),
             onPressed:
@@ -133,6 +171,7 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
           ),
         ],
       ),
+      drawer: AppDrawer(chatNotifier: chatNotifier),
       body: Stack(
         children: [
           SizedBox.expand(
@@ -147,9 +186,9 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
                 child: ListView.builder(
                   padding: const EdgeInsets.all(16),
                   reverse: true,
-                  itemCount: _conversation.length,
+                  itemCount: chatMessages.length,
                   itemBuilder: (context, index) {
-                    final message = _conversation.reversed.toList()[index];
+                    final message = chatMessages.reversed.toList()[index];
                     return _buildMessageBubble(message);
                   },
                 ),
@@ -174,50 +213,61 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
     );
   }
 
-  Widget _buildMessageBubble(Map<String, dynamic> message) {
+  Widget _buildMessageBubble(ChatMessage message) {
+    final isSpeaking = _speakingStates[message.id] ?? false;
+
     return Align(
-      alignment:
-          message['isUser'] ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color:
-              message['isUser']
-                  ? Colors.blue.withAlpha(190)
-                  : Colors.grey.withAlpha(190),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(12),
-            topRight: const Radius.circular(12),
-            bottomLeft:
-                message['isUser'] ? const Radius.circular(12) : Radius.zero,
-            bottomRight:
-                message['isUser'] ? Radius.zero : const Radius.circular(12),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                message['text'],
-                style: const TextStyle(color: Colors.white),
-              ),
+      alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: GestureDetector(
+        onLongPress: () {
+          Clipboard.setData(ClipboardData(text: message.text));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+        },
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color:
+                message.isUser
+                    ? Colors.blue.withAlpha(190)
+                    : Colors.grey.withAlpha(190),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(12),
+              topRight: const Radius.circular(12),
+              bottomLeft:
+                  message.isUser ? const Radius.circular(12) : Radius.zero,
+              bottomRight:
+                  message.isUser ? Radius.zero : const Radius.circular(12),
             ),
-            if (!message['isUser'])
-              IconButton(
-                icon: const Icon(Icons.volume_up, size: 20),
-                color: Colors.white,
-                onPressed: () async {
-                  await ttsService.speak(message['text']);
-                },
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  message.text,
+                  style: const TextStyle(color: Colors.white),
+                ),
               ),
-          ],
+              if (!message.isUser)
+                IconButton(
+                  icon: Icon(
+                    isSpeaking ? Icons.volume_off : Icons.volume_up,
+                    size: 20,
+                  ),
+                  color: Colors.white,
+                  onPressed: () => _toggleMessageSpeech(message),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  // MIC UI
   Widget _buildMicSection() {
     return Center(
       child: Column(
@@ -263,7 +313,9 @@ class _TalkModePageState extends ConsumerState<TalkModePage> {
             _isListening
                 ? 'Listening...'
                 : _isBotSpeaking
-                ? 'AI is responding...'
+                ? 'AI is speaking...'
+                : _isWaitingForResponse
+                ? 'AI is typing...'
                 : 'Tap to speak',
             style: const TextStyle(fontSize: 20, color: Colors.white),
           ),

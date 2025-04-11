@@ -1,16 +1,14 @@
 import 'package:uuid/uuid.dart';
 
 class ChatMessage {
-  final String id; // Add this field
-
+  final String id;
   final String text;
   final bool isUser;
   final bool isLoading;
   final DateTime timestamp;
 
   ChatMessage({
-    String? id, // Make optional
-
+    String? id,
     required this.text,
     required this.isUser,
     required this.timestamp,

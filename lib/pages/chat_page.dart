@@ -1,4 +1,5 @@
 import 'package:aia/elements/drawer.dart';
+import 'package:aia/elements/typing_indicator.dart';
 import 'package:aia/models/chat_message.dart';
 import 'package:aia/pages/talk_mode_page.dart';
 import 'package:aia/services/tts_services.dart';
@@ -21,6 +22,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final TextEditingController _controller = TextEditingController();
   final Map<String, bool> _speakingStates = {};
   late final TTSService ttsService;
+
+  bool _isWaitingForResponse = false;
   @override
   void initState() {
     super.initState();
@@ -30,7 +33,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void dispose() {
     _controller.dispose();
-    // Stop any ongoing speech when leaving the page
     ttsService.stop();
     super.dispose();
   }
@@ -40,12 +42,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (text.isEmpty) return;
 
     _controller.clear();
-    await ref.read(chatProvider.notifier).sendMessage(text);
+    setState(() => _isWaitingForResponse = true);
 
-    // Speak the last bot response
-    final messages = ref.read(chatProvider);
-    if (messages.isNotEmpty && !messages.last.isUser) {
-      await ttsService.speak(messages.last.text);
+    try {
+      await ref.read(chatProvider.notifier).sendMessage(text);
+    } finally {
+      if (mounted) {
+        setState(() => _isWaitingForResponse = false);
+      }
+      // Speak the last bot response
+      final messages = ref.read(chatProvider);
+
+      if (messages.isNotEmpty && !messages.last.isUser) {
+        await ttsService.speak(messages.last.text);
+      }
     }
   }
 
@@ -108,39 +118,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  // Widget _buildSessionDrawer(ChatNotifier chatNotifier) {
-  //   return Drawer(
-  //     child: ListView(
-  //       children: [
-  //         const DrawerHeader(
-  //           decoration: BoxDecoration(color: Colors.deepPurple),
-  //           child: Text(
-  //             'Chat Sessions',
-  //             style: TextStyle(color: Colors.white, fontSize: 24),
-  //           ),
-  //         ),
-  //         ...chatNotifier.sessionKeys.map(
-  //           (sessionKey) => ListTile(
-  //             title: Text(
-  //               sessionKey,
-  //               maxLines: 1,
-  //               overflow: TextOverflow.ellipsis,
-  //             ),
-  //             trailing:
-  //                 sessionKey == chatNotifier.currentSessionKey
-  //                     ? const Icon(Icons.check)
-  //                     : null,
-  //             onTap: () {
-  //               chatNotifier.switchSession(sessionKey);
-  //               Navigator.pop(context);
-  //             },
-  //           ),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
-
   Widget _buildBackgroundImage() {
     return SizedBox.expand(
       child: Image.asset(
@@ -162,10 +139,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Widget _buildMessageList(List<ChatMessage> messages) {
     return ListView.separated(
       padding: const EdgeInsets.all(12),
-      itemCount: messages.length,
+      itemCount: messages.length + (_isWaitingForResponse ? 1 : 0),
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
-        final msg = messages[index];
+        // Handle the typing indicator case
+        if (_isWaitingForResponse && index == messages.length) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(32),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
+                  bottomRight: Radius.circular(12),
+                ),
+              ),
+              child: const TypingIndicator(),
+            ),
+          );
+        }
+
+        // Adjust index if we added typing indicator
+        final adjustedIndex =
+            _isWaitingForResponse && index > messages.length
+                ? index - 1
+                : index;
+        final msg = messages[adjustedIndex];
         final isSpeaking = _speakingStates[msg.id] ?? false;
 
         return GestureDetector(
@@ -198,7 +200,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${msg.timestamp.hour}:${msg.timestamp.minute}',
+                        '${msg.timestamp.hour}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
                         style: const TextStyle(
                           fontSize: 10,
                           color: Colors.grey,

@@ -9,7 +9,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   List<String> get sessionKeys => _sessions.keys.toList();
   String get currentSessionKey => _currentSessionKey;
   final Map<String, List<ChatMessage>> _sessions = {};
-  String _currentSessionKey = 'default_session';
+  String _currentSessionKey =
+      'session_${DateTime.now().millisecondsSinceEpoch}';
 
   ChatNotifier(this._geminiService, this._storageService) : super([]) {
     _loadSessions();
@@ -45,19 +46,18 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     );
     _addMessage(userMessage);
 
+    // Removed loading as Built a loading indicator
     // Add loading indicator
-    final loadingMessage = ChatMessage(
-      text: '...',
-      isUser: false,
-      isLoading: true,
-      timestamp: DateTime.now(),
-    );
-    _addMessage(loadingMessage);
+    // final loadingMessage = ChatMessage(
+    //   text: '...',
+    //   isUser: false,
+    //   isLoading: true,
+    //   timestamp: DateTime.now(),
+    // );
+    // _addMessage(loadingMessage);
 
-    // Get response
     final reply = await _geminiService.getResponse(state);
-
-    // Remove loading and add response
+    //Removing Loading
     state = state.where((msg) => !msg.isLoading).toList();
     final botMessage = ChatMessage(
       text: reply,
